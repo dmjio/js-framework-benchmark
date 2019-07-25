@@ -5,25 +5,28 @@
 
 module Main where
 
-import           Data.Monoid         ((<>))
+import           Data.Monoid        ((<>))
 
-import qualified Data.Map            as M
-import qualified Data.Vector         as V
-import qualified Data.Vector.Mutable as MV
+import           Control.Arrow
+import qualified Data.IntMap.Strict as IM
+import qualified Data.Map           as M
+import qualified Data.Vector        as V
+
 import           Miso
-import           Miso.String         (MisoString)
-import qualified Miso.String         as S
+import           Miso.String        (MisoString)
+import qualified Miso.String        as S
 import           System.Random
 
 data Row = Row
-  { rowIdx :: !Int
+  { rowIdx   :: !Int
   , rowTitle :: !MisoString
   } deriving (Eq)
 
 data Model = Model
-  { rows :: !(V.Vector Row)
+  { rows       :: !(IM.IntMap Row)
   , selectedId :: !(Maybe Int)
-  , lastId :: !Int
+  , lastId     :: !Int
+  , seed       :: !StdGen
   } deriving (Eq)
 
 data Action = Create !Int
@@ -95,83 +98,94 @@ nouns = V.fromList  [ "table"
                     ]
 
 main :: IO ()
-main = startApp App
+main = do
+  seed <- newStdGen
+  startApp App
   { initialAction = NoOp
-  , model = initialModel
-  , update = updateModel
-  , view = viewModel
-  , events = M.singleton "click" True
-  , subs = []
-  , mountPoint = Nothing
+  , model         = initialModel seed
+  , update        = updateModel
+  , view          = viewModel
+  , events        = M.singleton "click" True
+  , subs          = []
+  , mountPoint    = Nothing
   }
 
-initialModel :: Model
-initialModel = Model
-  { rows = V.empty
+initialModel :: StdGen -> Model
+initialModel seed = Model
+  { rows = mempty
   , selectedId = Nothing
   , lastId = 1
+  , seed = seed
   }
 
+createRows :: Int -> Int -> StdGen -> (StdGen, IntMap Row)
+createRows n lastIdx seed =
+  IM.fromList . fmap (rowIdx &&& id) <$> go seed mempty [0..n]
+    where
+      go seed intMap [] = (seed, intMap)
+      go s0 intMap (x:xs) = do
+        let (adjIdx, s1)   = randomR (0, V.length adjectives - 1) s0
+            (colorIdx, s2) = randomR (0, V.length colours - 1) s1
+            (nounIdx, s3)  = randomR (0, V.length nounds - 1) s2
+            title = MS.intercalate " "
+              [ adjectives V.! adjIdx
+              , colours V.! colorIdx
+              , nouns V.! noundIdx
+              ]
+        go s3 (IM.insert x title intMap) xs
+
 updateModel :: Action -> Model -> Effect Action Model
-
 updateModel (ChangeModel newModel) _ = noEff newModel
+updateModel (Create n) model@Model{..} = noEff $
+  let
+    (newSeed, intMap) = createRows 0 lastIdx seed
+  in
+    model { lastId = lastIdx + n
+          , rows = intMap
+          , seed = newSeed
+          }
 
-updateModel (Create n) model@Model{lastId=lastIdx} =
-  model <# do
-    newRows <- generateRows n lastIdx
-    pure $ ChangeModel model  { rows = newRows
-                              , lastId = lastIdx + n
-                              }
+updateModel (Append n) model@Model{..} = noEff $ do
+  let
+    (newSeed, newRows) = createRows n lastId seed
+  in
+    model { lastId = lastId + n
+          , rows = rows model <> newRows
+          , seed = newSeed
+          }
 
-updateModel (Append n) model@Model{rows=existingRows, lastId=lastIdx} =
-  model <# do
-    newRows <- generateRows n (lastId model)
-    pure $ ChangeModel model  { rows=existingRows V.++ newRows
-                              , lastId=lastIdx + n
-                              }
+updateModel Clear model = noEff model { rows = mempty, lastId = 0 }
 
-updateModel Clear model = noEff model{ rows= V.empty }
+updateModel (Update n) model@Model{..} = noEff $
+  let
+    newRows =
+      flip IM.mapWithKey rows $ \key x ->
+                                  if key `mod` 10 == 0
+                                  then x { rowTitle = rowTitle x <> " !!!" }
+                                  else x
+  in
+    model { rows = newRows }
 
-updateModel (Update n) model =
-  noEff model{ rows = updatedRows }
+updateModel Swap model = noEff newModel
   where
-      updatedRows = V.imap updateR (rows model)
-      updateR i row = if mod i 10 == 0
-                          then row{ rowTitle = rowTitle row <> " !!!" }
-                          else row
+    len = IM.size (model rows)
+    newModel =
+      if len > 998
+        then model { rows = swappedRows }
+        else model
+    swappedRows =
+      let
+        oneValue = model rows IM.! 1
+        nineNineEightValue = model rows IM.! 998
+      in
+        IM.insert 1 nineNineEightValue (IM.insert 998 oneValue intMap)
 
-updateModel Swap model =
-  noEff newModel
-  where
-    currentRows = rows model
-    from = V.indexed
-    newModel = if V.length currentRows > 998
-                  then model { rows = swappedRows }
-                  else model
-    swappedRows = V.modify (\v -> MV.swap v 1 998) currentRows
+updateModel (Select idx) model = noEff model { selectedId = Just idx }
 
-updateModel (Select idx) model = noEff model{selectedId=Just idx}
-
-updateModel (Remove idx) model@Model{rows=currentRows} =
-  noEff model { rows = firstPart V.++ V.drop 1 remainingPart }
-  where
-    (firstPart, remainingPart) = V.splitAt idx currentRows
+updateModel (Remove idx) model@Model{ rows = currentRows } =
+  noEff model { rows = IM.delete idx currentRows }
 
 updateModel NoOp model = noEff model
-
-generateRows :: Int -> Int -> IO (V.Vector Row)
-generateRows n lastIdx = V.generateM n $ \x -> do
-  adjIdx <- randomRIO (0, V.length adjectives - 1)
-  colorIdx <- randomRIO (0, V.length colours - 1)
-  nounIdx <- randomRIO (0, V.length nouns - 1)
-  pure Row
-          { rowIdx=lastIdx + x
-          , rowTitle= (adjectives V.! adjIdx)
-                      <> S.pack " "
-                      <> (colours V.! colorIdx)
-                      <> S.pack " "
-                      <> (nouns V.! nounIdx)
-          }
 
 viewModel :: Model -> View Action
 viewModel m = div_ [id_ "main"]
