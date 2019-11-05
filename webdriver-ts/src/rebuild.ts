@@ -2,7 +2,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 const ncu = require('npm-check-updates');
 import * as _ from 'lodash';
-import { JSONResult, config, FrameworkData, initializeFrameworks, BenchmarkError, ErrorsAndWarning, BenchmarkOptions } from './common'
+import { JSONResult, config, FrameworkData, initializeFrameworks, BenchmarkOptions } from './common'
 
 var exec = require('child_process').execSync;
 
@@ -36,8 +36,8 @@ if (frameworks.length === 0) {
     });
 
     let frameworkNames = frameworks.join(" ");
-    console.log('npm run bench -- --headless --noResults --count 1  '+frameworkNames);
-    exec('npm run bench -- --headless --noResults --count 1 '+frameworkNames, {
+    console.log('npm run bench -- --headless --noResults --exitOnError true --count 1  '+frameworkNames);
+    exec('npm run bench -- --headless --noResults --exitOnError true --count 1 '+frameworkNames, {
         stdio: 'inherit'
     });
     console.log('npm run isKeyed -- --headless '+frameworkNames);
