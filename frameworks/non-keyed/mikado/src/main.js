@@ -5,25 +5,27 @@ import { buildData } from "./data.js";
 
 Mikado.once(document.getElementById("main"), app);
 
-const state = { "selected": {} };
+let data = [], selected = 0;
 const root = document.getElementById("tbody");
-const mikado = Mikado.new(root, item, {
-    "reuse": true, "state": state
-})
-.route("run", () => { mikado.render(buildData(1000)) })
-.route("runlots", () => { mikado.render(buildData(10000)) })
-.route("add", () => { mikado.append(buildData(1000)) })
+const view = new Mikado(root, item)
+.route("run", () => view.render(data = buildData(1000)))
+.route("runlots", () => view.render(buildData(10000)))
+.route("add", () => view.append(buildData(1000)))
 .route("update", () => {
-    for(let i = 0, len = mikado.length; i < len; i += 10){
-        mikado.data(i).label += " !!!";
-        mikado.refresh(i);
+    for(let i = 0; i < data.length; i += 10){
+        data[i].label += " !!!";
+        view.update(i, data[i]);
     }
 })
-.route("clear", () => { mikado.clear() })
-.route("swaprows", () => { mikado.swap(1, 998) })
-.route("remove", target => { mikado.remove(target) })
+.route("clear", () => view.clear())
+.route("swaprows", () => {
+    const tmp = data[998];
+    view.update(998, data[998] = data[1]);
+    view.update(1, data[1] = tmp);
+})
+.route("remove", target => view.remove(target))
 .route("select", target => {
-    state["selected"].className = "";
-    (state["selected"] = target).className = "danger";
+    view.update(selected, data[selected]);
+    view.update(selected = view.index(target), data[selected], selected);
 })
 .listen("click");
